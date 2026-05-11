@@ -38,7 +38,7 @@ export function GradesPage() {
 
           </CardHeader>
           <CardContent>
-            <GradeTable rows={g.rows} />
+            <GradeTable rows={g.rows} maxRows={5} />
           </CardContent>
         </Card>
       ))}

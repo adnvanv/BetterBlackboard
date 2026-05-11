@@ -9,11 +9,11 @@ A personal Blackboard dashboard. Scrapes your enrolled (favorited) courses once 
 ```
 ┌───────────────────┐                          ┌──────────────────────┐
 │ Laptop (Windows)  │                          │ Server (Pi / VPS)    │
-│ login_client GUI  │── storage_state.json ──▶ │ Docker container     │
-│ (Playwright +     │   over Tailscale          │  ├─ uvicorn (API)    │
-│  Duo MFA, once    │                          │  ├─ APScheduler       │
-│  per ~week)       │                          │  ├─ Playwright scrape │
-└───────────────────┘                          │  └─ React UI (built)  │
+│ login_client GUI  │── storage_state.json ─>  │  Docker container    │
+│ (Playwright +     │   over Tailscale         │  ├─ uvicorn (API)    │
+│  Duo MFA, once    │                          │  ├─ APScheduler      │
+│  per ~week)       │                          │  ├─ Playwright scrape│
+└───────────────────┘                          │  └─ React UI (built) │
                                                └──────────────────────┘
                                                         │
                                                         ▼

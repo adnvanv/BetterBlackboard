@@ -58,18 +58,24 @@ async def _click_relogin_button(page: Page) -> bool:
 
 
 async def _fill_cas_form(page: Page) -> bool:
-    """If we're on a CAS login form, fill creds from .env and submit.
-    Returns True if we did something."""
+    """If we're on a CAS login form, fill creds from credentials.json (or .env
+    as fallback) and submit. Returns True if we did something."""
+    from app.config import get_credentials
+
     user_loc = page.locator("input[name='username'], input#username").first
     pass_loc = page.locator("input[name='password'], input#password").first
     if not (await user_loc.count() and await pass_loc.count()):
         return False
-    if not (settings.BLACKBOARD_USER and settings.BLACKBOARD_PASS):
-        log.warning("CAS form detected but BLACKBOARD_USER/PASS not set in .env")
+    bb_user, bb_pass = get_credentials()
+    if not (bb_user and bb_pass):
+        log.warning(
+            "CAS form detected but no credentials available "
+            "(neither credentials.json nor BLACKBOARD_USER/PASS in .env)."
+        )
         return False
     log.info("Filling CAS form at %s", page.url)
-    await user_loc.fill(settings.BLACKBOARD_USER)
-    await pass_loc.fill(settings.BLACKBOARD_PASS)
+    await user_loc.fill(bb_user)
+    await pass_loc.fill(bb_pass)
     submit = page.locator(
         "button[name='submit'], button[type='submit'], input[type='submit'], button:has-text('Login'), button:has-text('Sign in')"
     ).first

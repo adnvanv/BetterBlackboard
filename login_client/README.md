@@ -29,8 +29,15 @@ pip install -r requirements.txt
 playwright install chromium
 
 Copy-Item config.example.json config.json
-notepad config.json   # set blackboard_url, server_url, paste the SAME token
+notepad config.json   # set blackboard_url, server_url, upload token,
+                      # AND your Blackboard username + password
 ```
+
+Username/password are shipped to the server alongside the session cookies
+and stored in `data/credentials.json` there. They're used only when the
+saved session expires *and* CAS still trusts your browser (silent re-login).
+You no longer need to put `BLACKBOARD_USER`/`BLACKBOARD_PASS` in the server's
+`.env` — the credentials.json overrides anything in `.env`.
 
 ## Usage
 

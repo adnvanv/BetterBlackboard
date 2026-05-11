@@ -1,3 +1,7 @@
+import json
+import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,3 +28,29 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def _credentials_path() -> str:
+    base = os.path.dirname(os.path.abspath(settings.BB_STORAGE_STATE)) or "."
+    return os.path.join(base, "credentials.json")
+
+
+def get_credentials() -> tuple[str, str]:
+    """Return (username, password) for Blackboard.
+
+    Prefers `credentials.json` (written by the login_client upload) over the
+    .env defaults, so creds can be refreshed at runtime without an env edit
+    or container restart. Falls back to BLACKBOARD_USER / BLACKBOARD_PASS.
+    """
+    cpath = _credentials_path()
+    if os.path.exists(cpath):
+        try:
+            with open(cpath, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+            user = (data.get("blackboard_user") or "").strip()
+            password = data.get("blackboard_pass") or ""
+            if user or password:
+                return user or settings.BLACKBOARD_USER, password or settings.BLACKBOARD_PASS
+        except Exception:
+            pass
+    return settings.BLACKBOARD_USER, settings.BLACKBOARD_PASS

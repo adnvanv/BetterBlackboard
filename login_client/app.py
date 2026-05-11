@@ -119,6 +119,14 @@ class App:
         self.token = tk.StringVar(value=self.cfg.get("upload_token", ""))
         ttk.Entry(frm, textvariable=self.token, show="•").grid(row=2, column=1, sticky="ew", padx=4)
 
+        ttk.Label(frm, text="Blackboard username:").grid(row=3, column=0, sticky="w")
+        self.bb_user = tk.StringVar(value=self.cfg.get("blackboard_user", ""))
+        ttk.Entry(frm, textvariable=self.bb_user).grid(row=3, column=1, sticky="ew", padx=4)
+
+        ttk.Label(frm, text="Blackboard password:").grid(row=4, column=0, sticky="w")
+        self.bb_pass = tk.StringVar(value=self.cfg.get("blackboard_pass", ""))
+        ttk.Entry(frm, textvariable=self.bb_pass, show="•").grid(row=4, column=1, sticky="ew", padx=4)
+
         frm.columnconfigure(1, weight=1)
 
         # Buttons
@@ -170,6 +178,8 @@ class App:
             "blackboard_url": self.bb_url.get().strip(),
             "server_url": self.server_url.get().strip(),
             "upload_token": self.token.get().strip(),
+            "blackboard_user": self.bb_user.get().strip(),
+            "blackboard_pass": self.bb_pass.get(),
         })
         self._info(f"Config saved to {CONFIG_PATH}")
 
@@ -247,13 +257,22 @@ class App:
 
         url = f"{server}/api/admin/session"
         size = os.path.getsize(self.state_path)
-        self._info(f"POST {url}  ({size} bytes)")
+        bb_user = self.bb_user.get().strip()
+        bb_pass = self.bb_pass.get()
+        self._info(f"POST {url}  ({size} bytes, user={'<set>' if bb_user else '<empty>'})")
         try:
             with self.state_path.open("rb") as f:
+                files = {"file": ("storage_state.json", f, "application/json")}
+                data = {}
+                if bb_user:
+                    data["blackboard_user"] = bb_user
+                if bb_pass:
+                    data["blackboard_pass"] = bb_pass
                 r = httpx.post(
                     url,
                     headers={"X-Upload-Token": token},
-                    files={"file": ("storage_state.json", f, "application/json")},
+                    files=files,
+                    data=data,
                     timeout=30.0,
                 )
             if r.status_code == 200:

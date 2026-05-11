@@ -1,5 +1,7 @@
 {
   "blackboard_url": "https://blackboard.sc.edu",
   "server_url": "http://your-server.your-tailnet.ts.net:8000",
-  "upload_token": "paste-the-same-long-random-string-here-as-on-the-server"
+  "upload_token": "paste-the-same-long-random-string-here-as-on-the-server",
+  "blackboard_user": "your_username",
+  "blackboard_pass": "your_password"
 }

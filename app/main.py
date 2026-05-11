@@ -222,14 +222,48 @@ def _require_upload_token(x_upload_token: Optional[str] = Header(default=None)) 
         raise HTTPException(401, "Bad or missing X-Upload-Token header.")
 
 
+from fastapi import Form
+
+
+def _atomic_write(dest: str, content: bytes) -> None:
+    """Write `content` to `dest` atomically via a tempfile in the same directory."""
+    os.makedirs(os.path.dirname(os.path.abspath(dest)) or ".", exist_ok=True)
+    fd, tmp = tempfile.mkstemp(
+        dir=os.path.dirname(os.path.abspath(dest)) or ".",
+        prefix=".upload.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _credentials_path() -> str:
+    """Sit next to the storage_state file so backups capture both together."""
+    base = os.path.dirname(os.path.abspath(settings.BB_STORAGE_STATE)) or "."
+    return os.path.join(base, "credentials.json")
+
+
 @app.post("/api/admin/session", dependencies=[Depends(_require_upload_token)])
-async def api_upload_session(file: UploadFile = File(...)):
+async def api_upload_session(
+    file: UploadFile = File(...),
+    blackboard_user: Optional[str] = Form(default=None),
+    blackboard_pass: Optional[str] = Form(default=None),
+):
     """Receive a fresh storage_state.json from the login_client GUI and atomically
-    replace the on-disk file the scraper reads."""
+    replace the on-disk file the scraper reads. Optional username/password fields
+    are persisted alongside in data/credentials.json (used by the auto-relogin
+    flow when CAS cookies are still valid)."""
     raw = await file.read()
     if len(raw) > 5 * 1024 * 1024:
         raise HTTPException(413, "Payload too large.")
-    # Validate it parses as JSON and looks like a Playwright storage_state.
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -237,19 +271,37 @@ async def api_upload_session(file: UploadFile = File(...)):
     if not isinstance(payload, dict) or "cookies" not in payload:
         raise HTTPException(400, "JSON does not look like a Playwright storage_state (missing 'cookies').")
 
-    dest = settings.BB_STORAGE_STATE
-    os.makedirs(os.path.dirname(os.path.abspath(dest)) or ".", exist_ok=True)
-    # Atomic replace via tempfile in the same directory.
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(dest)) or ".", prefix=".storage_state.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(raw)
-        os.replace(tmp, dest)
-    except Exception:
-        try: os.unlink(tmp)
-        except OSError: pass
-        raise
-    return {"ok": True, "bytes": len(raw), "cookies": len(payload.get("cookies", []))}
+    _atomic_write(settings.BB_STORAGE_STATE, raw)
+
+    creds_written = False
+    if blackboard_user or blackboard_pass:
+        creds = {}
+        cpath = _credentials_path()
+        # Preserve existing fields the caller didn't update.
+        if os.path.exists(cpath):
+            try:
+                with open(cpath, "r", encoding="utf-8") as cf:
+                    creds = json.load(cf) or {}
+            except Exception:
+                creds = {}
+        if blackboard_user:
+            creds["blackboard_user"] = blackboard_user
+        if blackboard_pass:
+            creds["blackboard_pass"] = blackboard_pass
+        _atomic_write(_credentials_path(), json.dumps(creds).encode("utf-8"))
+        # Restrict to owner read/write where the OS supports it.
+        try:
+            os.chmod(_credentials_path(), 0o600)
+        except OSError:
+            pass
+        creds_written = True
+
+    return {
+        "ok": True,
+        "bytes": len(raw),
+        "cookies": len(payload.get("cookies", [])),
+        "credentialsSaved": creds_written,
+    }
 
 
 # ---------- Static SPA (only if built) ----------

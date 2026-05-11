@@ -1,6 +1,7 @@
 # Secrets and live state — NEVER commit
 .env
 storage_state.json
+credentials.json
 data/
 login_client/config.json
 login_client/storage_state.json
