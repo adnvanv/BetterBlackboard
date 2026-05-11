@@ -1,0 +1,15 @@
+services:
+  web:
+    build: .
+    image: betterblackboard:latest
+    container_name: betterblackboard
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - TZ=America/New_York
+    volumes:
+      - ./data:/data
+    # Use the network host's DNS for outbound (Playwright -> Blackboard).

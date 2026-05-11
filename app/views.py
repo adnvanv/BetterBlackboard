@@ -1,0 +1,274 @@
+"""Query helpers. Each returns plain dicts so they can be fed to Pydantic
+response models in app.main."""
+from __future__ import annotations
+
+import re
+from datetime import datetime, timedelta
+from typing import Any
+
+from sqlmodel import Session, select
+
+
+# Strip embedded "Due: ..." sub-text and trailing type label chip that the
+# scraper accidentally concatenates into assignment titles.
+_DUE_INLINE = re.compile(r"\s*Due:\s*[A-Za-z]+\s*\d{1,2},?\s*\d{4}.*$", re.IGNORECASE)
+_TYPE_TRAIL = re.compile(
+    r"(?:Assignment|Quiz|Exam|Test|Discussion|Survey|Project)\s*$",
+    re.IGNORECASE,
+)
+
+
+def clean_title(s: str | None) -> str:
+    if not s:
+        return s or ""
+    s = _DUE_INLINE.sub("", s)
+    s = _TYPE_TRAIL.sub("", s).rstrip()
+    return s
+
+
+def _is_new_grade(session: Session, latest: "Grade", week_ago: datetime) -> bool:
+    """A grade row is shown as 'new' iff (a) it was scraped in the last week AND
+    (b) there exists a prior reading for the same assignment with a different score.
+    This avoids labelling every row 'new' on the first ever scrape."""
+    if latest.scraped_at < week_ago:
+        return False
+    prior = session.exec(
+        select(Grade)
+        .where(Grade.assignment_id == latest.assignment_id)
+        .where(Grade.id != latest.id)
+        .order_by(Grade.scraped_at.desc())
+    ).first()
+    if not prior:
+        return False
+    return (
+        prior.score != latest.score
+        or prior.raw != latest.raw
+        or prior.letter != latest.letter
+    )
+
+from app.models import (
+    Announcement,
+    Assignment,
+    CalendarEvent,
+    Course,
+    Grade,
+    ScrapeRun,
+)
+
+
+def _course_dict(c: Course) -> dict[str, Any]:
+    return {
+        "id": c.id,
+        "name": c.name,
+        "code": c.code,
+        "term": c.term,
+        "url": c.url,
+    }
+
+
+def urgency_class(when: datetime) -> str:
+    delta = when - datetime.utcnow()
+    seconds = delta.total_seconds()
+    if seconds < 24 * 3600:
+        return "urgent"
+    if seconds < 72 * 3600:
+        return "soon"
+    return "later"
+
+
+def upcoming(session: Session, days: int = 14) -> list[dict[str, Any]]:
+    now = datetime.utcnow()
+    horizon = now + timedelta(days=days)
+    floor = now - timedelta(hours=12)
+    items: list[dict[str, Any]] = []
+
+    rows = session.exec(
+        select(Assignment, Course)
+        .join(Course, Course.id == Assignment.course_id)
+        .where(Assignment.due_at != None)  # noqa: E711
+        .where(Assignment.due_at <= horizon)
+        .where(Assignment.due_at >= floor)
+    ).all()
+    for a, c in rows:
+        items.append({
+            "kind": "assignment",
+            "title": a.title,
+            "when": a.due_at,
+            "course": c.name,
+            "courseId": c.id,
+            "url": a.url,
+            "urgency": urgency_class(a.due_at),
+        })
+
+    events = session.exec(
+        select(CalendarEvent, Course)
+        .join(Course, Course.id == CalendarEvent.course_id, isouter=True)
+        .where(CalendarEvent.starts_at != None)  # noqa: E711
+        .where(CalendarEvent.starts_at <= horizon)
+        .where(CalendarEvent.starts_at >= floor)
+    ).all()
+    for ev, c in events:
+        items.append({
+            "kind": "event",
+            "title": ev.title,
+            "when": ev.starts_at,
+            "course": c.name if c else None,
+            "courseId": c.id if c else None,
+            "url": ev.url,
+            "urgency": urgency_class(ev.starts_at),
+        })
+
+    items.sort(key=lambda x: x["when"])
+    return items
+
+
+def announcement_dict(ann: Announcement, course: Course | None) -> dict[str, Any]:
+    return {
+        "id": ann.id,
+        "title": ann.title,
+        "bodyHtml": ann.body_html,
+        "postedAt": ann.posted_at,
+        "author": ann.author,
+        "course": course.name if course else None,
+        "courseId": course.id if course else None,
+    }
+
+
+def recent_announcements(session: Session, limit: int = 10) -> list[dict[str, Any]]:
+    rows = session.exec(
+        select(Announcement, Course)
+        .join(Course, Course.id == Announcement.course_id, isouter=True)
+        .order_by(Announcement.posted_at.desc().nulls_last(), Announcement.first_seen_at.desc())
+        .limit(limit)
+    ).all()
+    return [announcement_dict(a, c) for a, c in rows]
+
+
+def grades_by_course(session: Session) -> list[dict[str, Any]]:
+    courses = session.exec(select(Course)).all()
+    out: list[dict[str, Any]] = []
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    for c in courses:
+        assignments = session.exec(
+            select(Assignment).where(Assignment.course_id == c.id)
+        ).all()
+        rows: list[dict[str, Any]] = []
+        total_score = 0.0
+        total_possible = 0.0
+        for a in assignments:
+            latest = session.exec(
+                select(Grade)
+                .where(Grade.assignment_id == a.id)
+                .order_by(Grade.scraped_at.desc())
+            ).first()
+            if not latest:
+                continue
+            rows.append({
+                "title": clean_title(a.title),
+                "dueAt": a.due_at,
+                "score": latest.score,
+                "possible": latest.points_possible,
+                "letter": latest.letter,
+                "raw": latest.raw,
+                "isNew": _is_new_grade(session, latest, week_ago),
+                "scrapedAt": latest.scraped_at,
+            })
+            if latest.score is not None and latest.points_possible:
+                total_score += latest.score
+                total_possible += latest.points_possible
+        if not rows:
+            continue
+        avg = (total_score / total_possible * 100) if total_possible else None
+        out.append({
+            "course": _course_dict(c),
+            "averagePct": avg,
+            "rows": rows,
+        })
+    return out
+
+
+def recent_grade_rows(session: Session, days: int = 7, limit: int = 10) -> list[dict[str, Any]]:
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    rows = session.exec(
+        select(Grade, Assignment, Course)
+        .join(Assignment, Assignment.id == Grade.assignment_id)
+        .join(Course, Course.id == Assignment.course_id)
+        .where(Grade.scraped_at >= cutoff)
+        .order_by(Grade.scraped_at.desc())
+        .limit(limit)
+    ).all()
+    return [{
+        "title": f"{clean_title(a.title)} — {c.name}",
+        "dueAt": a.due_at,
+        "score": g.score,
+        "possible": g.points_possible,
+        "letter": g.letter,
+        "raw": g.raw,
+        "isNew": _is_new_grade(session, g, datetime.utcnow() - timedelta(days=days)),
+        "scrapedAt": g.scraped_at,
+    } for g, a, c in rows]
+
+
+def list_assignments(session: Session, course_id: int | None = None,
+                     status: str = "all") -> list[dict[str, Any]]:
+    now = datetime.utcnow()
+    q = select(Assignment, Course).join(Course, Course.id == Assignment.course_id)
+    if course_id is not None:
+        q = q.where(Assignment.course_id == course_id)
+    if status == "upcoming":
+        q = q.where(Assignment.due_at != None).where(Assignment.due_at >= now)  # noqa: E711
+    elif status == "past":
+        q = q.where(Assignment.due_at != None).where(Assignment.due_at < now)  # noqa: E711
+    q = q.order_by(Assignment.due_at.asc().nulls_last())
+    rows = session.exec(q).all()
+    return [{
+        "id": a.id,
+        "title": a.title,
+        "dueAt": a.due_at,
+        "pointsPossible": a.points_possible,
+        "url": a.url,
+        "course": c.name,
+        "courseId": c.id,
+    } for a, c in rows]
+
+
+def list_announcements(session: Session, course_id: int | None = None) -> list[dict[str, Any]]:
+    q = select(Announcement, Course).join(Course, Course.id == Announcement.course_id, isouter=True)
+    if course_id is not None:
+        q = q.where(Announcement.course_id == course_id)
+    q = q.order_by(Announcement.posted_at.desc().nulls_last(), Announcement.first_seen_at.desc())
+    return [announcement_dict(a, c) for a, c in session.exec(q).all()]
+
+
+def list_courses(session: Session) -> list[dict[str, Any]]:
+    return [_course_dict(c) for c in session.exec(select(Course).order_by(Course.name)).all()]
+
+
+def course_detail(session: Session, course_id: int) -> dict[str, Any] | None:
+    course = session.get(Course, course_id)
+    if not course:
+        return None
+    return {
+        "course": _course_dict(course),
+        "assignments": list_assignments(session, course_id=course_id, status="all"),
+        "announcements": list_announcements(session, course_id=course_id),
+        "gradeGroups": [g for g in grades_by_course(session) if g["course"]["id"] == course_id],
+    }
+
+
+def health(session: Session) -> dict[str, Any]:
+    from app import progress as _progress
+
+    run = session.exec(select(ScrapeRun).order_by(ScrapeRun.started_at.desc())).first()
+    snap = _progress.snapshot()
+    base = {"progress": snap}
+    if not run:
+        return {**base, "status": "no-runs", "coursesScraped": 0}
+    return {
+        **base,
+        "status": run.status,
+        "startedAt": run.started_at,
+        "finishedAt": run.finished_at,
+        "coursesScraped": run.courses_scraped,
+        "error": run.error,
+    }

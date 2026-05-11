@@ -1,0 +1,11 @@
+[Unit]
+Description=BetterBlackboard daily scrape
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=bb
+WorkingDirectory=/opt/betterblackboard
+EnvironmentFile=/opt/betterblackboard/.env
+ExecStart=/opt/betterblackboard/.venv/bin/python -m scraper run
