@@ -92,12 +92,14 @@ def upcoming(session: Session, days: int = 14) -> list[dict[str, Any]]:
     for a, c in rows:
         items.append({
             "kind": "assignment",
+            "id": a.id,
             "title": a.title,
             "when": a.due_at,
             "course": c.name,
             "courseId": c.id,
             "url": a.url,
             "urgency": urgency_class(a.due_at),
+            "manual": (a.blackboard_id or "").startswith("manual:"),
         })
 
     events = session.exec(
@@ -170,6 +172,7 @@ def grades_by_course(session: Session) -> list[dict[str, Any]]:
             rows.append({
                 "title": clean_title(a.title),
                 "dueAt": a.due_at,
+                "postedAt": latest.posted_at,
                 "score": latest.score,
                 "possible": latest.points_possible,
                 "letter": latest.letter,
@@ -208,14 +211,18 @@ def recent_grade_rows(
     week_ago = datetime.utcnow() - timedelta(days=days)
     picks: list[tuple[Grade, Assignment, Course]] = []
     courses = session.exec(select(Course)).all()
+    far_past = datetime.min
+
+    def _grade_rank(g: Grade, a: Assignment) -> datetime:
+        """Time used to rank: posted_at if Blackboard exposed one, else the
+        assignment's due_at, else scraped_at as a last resort."""
+        return g.posted_at or a.due_at or g.scraped_at or far_past
 
     for course in courses:
         assignments = session.exec(
-            select(Assignment)
-            .where(Assignment.course_id == course.id)
-            .order_by(Assignment.due_at.desc().nulls_last())
+            select(Assignment).where(Assignment.course_id == course.id)
         ).all()
-        course_picks: list[tuple[Grade, Assignment, Course]] = []
+        course_rows: list[tuple[Grade, Assignment, Course]] = []
         for a in assignments:
             latest = session.exec(
                 select(Grade)
@@ -224,20 +231,19 @@ def recent_grade_rows(
             ).first()
             if not latest:
                 continue
-            course_picks.append((latest, a, course))
-            if len(course_picks) >= per_course:
-                break
-        picks.extend(course_picks)
+            course_rows.append((latest, a, course))
+        # Pick the top `per_course` from this course by our rank, newest first.
+        course_rows.sort(key=lambda t: _grade_rank(t[0], t[1]), reverse=True)
+        picks.extend(course_rows[:per_course])
 
-    # Sort picks globally so the dashboard's order is consistent: most-recently-
-    # due first, with NULL due dates pushed to the end.
-    far_past = datetime.min
-    picks.sort(key=lambda t: (t[1].due_at or far_past, t[0].scraped_at), reverse=True)
+    # Sort union of picks globally so the dashboard's order is consistent.
+    picks.sort(key=lambda t: _grade_rank(t[0], t[1]), reverse=True)
     picks = picks[:limit]
 
     return [{
         "title": f"{clean_title(a.title)} — {c.name}",
         "dueAt": a.due_at,
+        "postedAt": g.posted_at,
         "score": g.score,
         "possible": g.points_possible,
         "letter": g.letter,
@@ -267,6 +273,7 @@ def list_assignments(session: Session, course_id: int | None = None,
         "url": a.url,
         "course": c.name,
         "courseId": c.id,
+        "manual": (a.blackboard_id or "").startswith("manual:"),
     } for a, c in rows]
 
 

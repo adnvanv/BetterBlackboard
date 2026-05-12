@@ -27,19 +27,15 @@ type Props = {
 export function GradeTable({ rows, compact = false, maxRows, enteredOnly = false }: Props) {
   const [expanded, setExpanded] = useState(false);
 
-  // Sort: most-recent due date first; rows without a due date go to the bottom.
-  // Within the no-due-date group, fall back to scrapedAt desc.
+  // Sort by Blackboard's posted-at if we have it, falling back to due date,
+  // then to scraped-at. Rows with no time info at all go to the bottom.
   const sorted = useMemo(() => {
-    return [...rows].sort((a, b) => {
-      const da = parseUtc(a.dueAt)?.getTime();
-      const db = parseUtc(b.dueAt)?.getTime();
-      if (da && db) return db - da;
-      if (da) return -1;
-      if (db) return 1;
-      const sa = parseUtc(a.scrapedAt)?.getTime() ?? 0;
-      const sb = parseUtc(b.scrapedAt)?.getTime() ?? 0;
-      return sb - sa;
-    });
+    const rank = (g: GradeRow) =>
+      parseUtc(g.postedAt)?.getTime() ??
+      parseUtc(g.dueAt)?.getTime() ??
+      parseUtc(g.scrapedAt)?.getTime() ??
+      -Infinity;
+    return [...rows].sort((a, b) => rank(b) - rank(a));
   }, [rows]);
 
   const filtered = enteredOnly ? sorted.filter(hasNumericGrade) : sorted;
@@ -78,9 +74,9 @@ export function GradeTable({ rows, compact = false, maxRows, enteredOnly = false
                     </Badge>
                   )}
                 </div>
-                {r.dueAt && (
+                {(r.dueAt || r.postedAt) && (
                   <div className="mt-0.5 text-[11px] text-muted-foreground">
-                    Due {fmtDate(r.dueAt)}
+                    {r.dueAt ? `Due ${fmtDate(r.dueAt)}` : `Posted ${fmtDate(r.postedAt)}`}
                   </div>
                 )}
               </div>

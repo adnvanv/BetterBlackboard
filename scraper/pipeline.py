@@ -143,6 +143,7 @@ def _record_grade(session, course_id: int, rec) -> None:
         points_possible=rec.points_possible,
         letter=rec.letter,
         raw=rec.raw,
+        posted_at=getattr(rec, "posted_at", None),
     ))
 
 

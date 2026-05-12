@@ -157,6 +157,131 @@ def api_health(session: Session = Depends(get_session)):
     return views.health(session)
 
 
+# ---------- Manual assignment entry ----------
+
+from datetime import datetime as _dt
+from pydantic import BaseModel, Field
+from app.models import Assignment, Course, utcnow as _utcnow
+import uuid as _uuid
+
+
+class _AssignmentCreate(BaseModel):
+    course_id: int = Field(alias="courseId")
+    title: str
+    due_at: _dt = Field(alias="dueAt")
+    points_possible: Optional[float] = Field(default=None, alias="pointsPossible")
+    url: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class _AssignmentUpdate(BaseModel):
+    course_id: Optional[int] = Field(default=None, alias="courseId")
+    title: Optional[str] = None
+    due_at: Optional[_dt] = Field(default=None, alias="dueAt")
+    points_possible: Optional[float] = Field(default=None, alias="pointsPossible")
+    url: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+@app.post("/api/assignments", status_code=201)
+def api_create_assignment(payload: _AssignmentCreate, session: Session = Depends(get_session)):
+    """Create a manual assignment. Survives future scrapes because its
+    blackboard_id is prefixed 'manual:' and the scraper's upsert keys won't
+    collide with anything Blackboard emits."""
+    course = session.get(Course, payload.course_id)
+    if not course:
+        raise HTTPException(404, f"Course id {payload.course_id} not found.")
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(400, "Title is required.")
+
+    row = Assignment(
+        course_id=payload.course_id,
+        blackboard_id=f"manual:{_uuid.uuid4().hex[:12]}",
+        title=title,
+        due_at=payload.due_at,
+        points_possible=payload.points_possible,
+        url=(payload.url or None),
+        first_seen_at=_utcnow(),
+        last_seen_at=_utcnow(),
+    )
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return {
+        "id": row.id,
+        "courseId": row.course_id,
+        "title": row.title,
+        "dueAt": row.due_at,
+        "pointsPossible": row.points_possible,
+        "url": row.url,
+        "course": course.name,
+    }
+
+
+@app.patch("/api/assignments/{assignment_id}")
+def api_update_assignment(
+    assignment_id: int,
+    payload: _AssignmentUpdate,
+    session: Session = Depends(get_session),
+):
+    """Edit a manual assignment. Scraped rows can't be edited; they'd just be
+    overwritten on the next scrape."""
+    row = session.get(Assignment, assignment_id)
+    if not row:
+        raise HTTPException(404, "Not found.")
+    if not (row.blackboard_id or "").startswith("manual:"):
+        raise HTTPException(400, "Only manually-added assignments can be edited.")
+
+    if payload.course_id is not None and payload.course_id != row.course_id:
+        course = session.get(Course, payload.course_id)
+        if not course:
+            raise HTTPException(404, f"Course id {payload.course_id} not found.")
+        row.course_id = payload.course_id
+    if payload.title is not None:
+        t = payload.title.strip()
+        if not t:
+            raise HTTPException(400, "Title cannot be empty.")
+        row.title = t
+    if payload.due_at is not None:
+        row.due_at = payload.due_at
+    if payload.points_possible is not None:
+        row.points_possible = payload.points_possible
+    if payload.url is not None:
+        row.url = payload.url or None
+    row.last_seen_at = _utcnow()
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    course = session.get(Course, row.course_id)
+    return {
+        "id": row.id,
+        "courseId": row.course_id,
+        "title": row.title,
+        "dueAt": row.due_at,
+        "pointsPossible": row.points_possible,
+        "url": row.url,
+        "course": course.name if course else None,
+        "manual": True,
+    }
+
+
+@app.delete("/api/assignments/{assignment_id}", status_code=204)
+def api_delete_assignment(assignment_id: int, session: Session = Depends(get_session)):
+    """Only manual assignments are deletable from the UI; everything else
+    re-appears on the next scrape so deletion is meaningless."""
+    row = session.get(Assignment, assignment_id)
+    if not row:
+        raise HTTPException(404, "Not found.")
+    if not (row.blackboard_id or "").startswith("manual:"):
+        raise HTTPException(400, "Only manually-added assignments can be deleted.")
+    session.delete(row)
+    session.commit()
+    return None
+
+
 # ---------- Scrape trigger ----------
 
 async def _run_scrape_async(run_id: int) -> None:

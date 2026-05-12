@@ -12,12 +12,14 @@ export type Urgency = "urgent" | "soon" | "later";
 
 export type UpcomingItem = {
   kind: "assignment" | "event";
+  id?: number | null;
   title: string;
   when: string; // ISO
   course?: string | null;
   courseId?: number | null;
   url?: string | null;
   urgency: Urgency;
+  manual?: boolean;
 };
 
 export type Announcement = {
@@ -33,6 +35,7 @@ export type Announcement = {
 export type GradeRow = {
   title: string;
   dueAt?: string | null;
+  postedAt?: string | null;
   score?: number | null;
   possible?: number | null;
   letter?: string | null;
@@ -55,6 +58,8 @@ export type Assignment = {
   url?: string | null;
   course?: string | null;
   courseId?: number | null;
+  /** True when the row was added manually via /api/assignments, not scraped. */
+  manual?: boolean;
 };
 
 export type ScrapeProgress = {
@@ -130,4 +135,50 @@ export const api = {
   course: (id: number) => get<CourseDetail>(`/api/courses/${id}`),
   health: () => get<Health>("/api/health"),
   scrape: postScrape,
+  createAssignment: async (input: {
+    courseId: number;
+    title: string;
+    dueAt: string; // ISO datetime
+    pointsPossible?: number | null;
+    url?: string | null;
+  }): Promise<Assignment> => {
+    const res = await fetch("/api/assignments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
+    }
+    return res.json();
+  },
+  updateAssignment: async (
+    id: number,
+    input: Partial<{
+      courseId: number;
+      title: string;
+      dueAt: string;
+      pointsPossible: number | null;
+      url: string | null;
+    }>,
+  ): Promise<Assignment> => {
+    const res = await fetch(`/api/assignments/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
+    }
+    return res.json();
+  },
+  deleteAssignment: async (id: number): Promise<void> => {
+    const res = await fetch(`/api/assignments/${id}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 204) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`${res.status} ${res.statusText}${text ? ` — ${text}` : ""}`);
+    }
+  },
 };

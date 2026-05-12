@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { UpcomingList } from "@/components/UpcomingList";
 import { AnnouncementList } from "@/components/AnnouncementList";
 import { GradeTable } from "@/components/GradeTable";
+import { AssignmentDialogTrigger } from "@/components/AssignmentDialog";
 import { api } from "@/lib/api";
 
 export function Home() {
@@ -18,9 +19,12 @@ export function Home() {
     <div className="grid gap-6 md:grid-cols-3">
       <div className="md:col-span-2 flex flex-col gap-6">
         <Card>
-          <CardHeader>
-            <CardTitle>Upcoming</CardTitle>
-            <p className="text-xs text-muted-foreground">Next 14 days</p>
+          <CardHeader className="flex flex-row items-start justify-between gap-3">
+            <div>
+              <CardTitle>Upcoming</CardTitle>
+              <p className="text-xs text-muted-foreground">Next 14 days</p>
+            </div>
+            <AssignmentDialogTrigger compact />
           </CardHeader>
           <CardContent>
             <UpcomingList items={data.upcoming} />

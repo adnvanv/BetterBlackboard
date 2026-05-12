@@ -51,6 +51,9 @@ class Grade(SQLModel, table=True):
     points_possible: Optional[float] = None
     letter: Optional[str] = None
     raw: Optional[str] = None
+    # When Blackboard shows the grade was posted/last-activity. Drives the
+    # "Latest grades" home page ordering. Falls back to scraped_at when null.
+    posted_at: Optional[datetime] = None
     scraped_at: datetime = Field(default_factory=utcnow)
 
 
