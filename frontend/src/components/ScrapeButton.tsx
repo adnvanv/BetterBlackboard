@@ -91,7 +91,7 @@ export function ScrapeButton() {
     <div className="flex items-center gap-2">
       {sessionExpired && <SessionExpiredPill />}
 
-      <div className="flex w-[220px] flex-col items-stretch gap-1.5">
+      <div className="relative w-[220px]">
         <Button
           variant="accent"
           size="sm"
@@ -107,7 +107,7 @@ export function ScrapeButton() {
           {label}
         </Button>
         {running && (
-          <div>
+          <div className="pointer-events-none absolute left-0 right-0 top-full mt-1">
             <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
               <div
                 className="h-full bg-accent transition-all duration-500"

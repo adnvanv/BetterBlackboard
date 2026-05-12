@@ -138,7 +138,11 @@ def recent_announcements(session: Session, limit: int = 10) -> list[dict[str, An
     rows = session.exec(
         select(Announcement, Course)
         .join(Course, Course.id == Announcement.course_id, isouter=True)
-        .order_by(Announcement.posted_at.desc().nulls_last(), Announcement.first_seen_at.desc())
+        .order_by(
+            Announcement.posted_at.desc().nulls_last(),
+            Announcement.first_seen_at.desc(),
+            Announcement.id.desc(),
+        )
         .limit(limit)
     ).all()
     return [announcement_dict(a, c) for a, c in rows]
@@ -187,16 +191,50 @@ def grades_by_course(session: Session) -> list[dict[str, Any]]:
     return out
 
 
-def recent_grade_rows(session: Session, days: int = 7, limit: int = 10) -> list[dict[str, Any]]:
-    cutoff = datetime.utcnow() - timedelta(days=days)
-    rows = session.exec(
-        select(Grade, Assignment, Course)
-        .join(Assignment, Assignment.id == Grade.assignment_id)
-        .join(Course, Course.id == Assignment.course_id)
-        .where(Grade.scraped_at >= cutoff)
-        .order_by(Grade.scraped_at.desc())
-        .limit(limit)
-    ).all()
+def recent_grade_rows(
+    session: Session,
+    limit: int = 15,
+    per_course: int = 3,
+    days: int = 7,
+) -> list[dict[str, Any]]:
+    """Latest entered grades across all courses, with per-course balancing.
+
+    Pulling strictly by due_at across the whole table tends to fill the limit
+    with one course that has lots of due-dated assignments (the others often
+    have NULL due_at because the parser couldn't extract a date from their
+    page). Instead, take the top `per_course` grades from each course, then
+    sort the union and crop to `limit`. Gives a mix across courses.
+    """
+    week_ago = datetime.utcnow() - timedelta(days=days)
+    picks: list[tuple[Grade, Assignment, Course]] = []
+    courses = session.exec(select(Course)).all()
+
+    for course in courses:
+        assignments = session.exec(
+            select(Assignment)
+            .where(Assignment.course_id == course.id)
+            .order_by(Assignment.due_at.desc().nulls_last())
+        ).all()
+        course_picks: list[tuple[Grade, Assignment, Course]] = []
+        for a in assignments:
+            latest = session.exec(
+                select(Grade)
+                .where(Grade.assignment_id == a.id)
+                .order_by(Grade.scraped_at.desc())
+            ).first()
+            if not latest:
+                continue
+            course_picks.append((latest, a, course))
+            if len(course_picks) >= per_course:
+                break
+        picks.extend(course_picks)
+
+    # Sort picks globally so the dashboard's order is consistent: most-recently-
+    # due first, with NULL due dates pushed to the end.
+    far_past = datetime.min
+    picks.sort(key=lambda t: (t[1].due_at or far_past, t[0].scraped_at), reverse=True)
+    picks = picks[:limit]
+
     return [{
         "title": f"{clean_title(a.title)} — {c.name}",
         "dueAt": a.due_at,
@@ -204,9 +242,9 @@ def recent_grade_rows(session: Session, days: int = 7, limit: int = 10) -> list[
         "possible": g.points_possible,
         "letter": g.letter,
         "raw": g.raw,
-        "isNew": _is_new_grade(session, g, datetime.utcnow() - timedelta(days=days)),
+        "isNew": _is_new_grade(session, g, week_ago),
         "scrapedAt": g.scraped_at,
-    } for g, a, c in rows]
+    } for g, a, c in picks]
 
 
 def list_assignments(session: Session, course_id: int | None = None,
@@ -236,7 +274,11 @@ def list_announcements(session: Session, course_id: int | None = None) -> list[d
     q = select(Announcement, Course).join(Course, Course.id == Announcement.course_id, isouter=True)
     if course_id is not None:
         q = q.where(Announcement.course_id == course_id)
-    q = q.order_by(Announcement.posted_at.desc().nulls_last(), Announcement.first_seen_at.desc())
+    q = q.order_by(
+        Announcement.posted_at.desc().nulls_last(),
+        Announcement.first_seen_at.desc(),
+        Announcement.id.desc(),
+    )
     return [announcement_dict(a, c) for a, c in session.exec(q).all()]
 
 

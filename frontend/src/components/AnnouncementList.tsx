@@ -35,8 +35,22 @@ export function AnnouncementList({
             <details className="mt-1.5 text-sm">
               <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Read</summary>
               <div
-                className="prose prose-sm prose-invert mt-2 max-w-none rounded-md bg-muted/40 p-3"
+                className={[
+                  "mt-2 max-w-none rounded-md bg-muted/40 p-3 leading-relaxed",
+                  // Style any <a> rendered from the raw announcement HTML.
+                  "[&_a]:text-accent [&_a]:underline [&_a]:underline-offset-2",
+                  "[&_a:hover]:text-accent/80",
+                  "[&_a]:break-words",
+                ].join(" ")}
                 dangerouslySetInnerHTML={{ __html: a.bodyHtml }}
+                ref={(el) => {
+                  // Force every embedded link to open in a new tab and not leak referrer.
+                  if (!el) return;
+                  el.querySelectorAll("a").forEach((node) => {
+                    node.setAttribute("target", "_blank");
+                    node.setAttribute("rel", "noopener noreferrer");
+                  });
+                }}
               />
             </details>
           )}

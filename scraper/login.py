@@ -36,19 +36,25 @@ async def _settle(page: Page) -> None:
 
 
 async def _click_relogin_button(page: Page) -> bool:
-    """If the page has a LOGIN button (USC's CAS relogin gate), click it.
-    Returns True if we clicked something."""
+    """If the page is the Blackboard relogin gate (a single LOGIN button that
+    bounces to CAS), click it. We ONLY match here on Blackboard's gate page —
+    the CAS login form itself also has a 'Login' submit button and we must not
+    confuse the two."""
+    url = page.url.lower()
+    if "blackboard." not in url:
+        return False
+    if "relogin" not in url and url.rstrip("/").endswith("blackboard.sc.edu") is False and "/webapps/login" not in url:
+        # Only the relogin/login gate on the Blackboard host; never CAS.
+        return False
     # Strip target='_blank' so navigation stays in this tab.
     await page.evaluate(
         "() => document.querySelectorAll('a.buttonLogin, a[target=_blank]')"
         ".forEach(a => a.removeAttribute('target'))"
     )
-    locator = page.locator(
-        "a.buttonLogin, a:has-text('LOGIN'), a:has-text('Login'), button:has-text('Login')"
-    ).first
+    locator = page.locator("a.buttonLogin").first
     if not await locator.count():
         return False
-    log.info("Clicking relogin LOGIN button at %s", page.url)
+    log.info("Clicking Blackboard relogin LOGIN button at %s", page.url)
     try:
         async with page.expect_navigation(wait_until="domcontentloaded", timeout=30_000):
             await locator.click()
@@ -64,9 +70,13 @@ async def _fill_cas_form(page: Page) -> bool:
 
     user_loc = page.locator("input[name='username'], input#username").first
     pass_loc = page.locator("input[name='password'], input#password").first
-    if not (await user_loc.count() and await pass_loc.count()):
+    user_count = await user_loc.count()
+    pass_count = await pass_loc.count()
+    log.info("CAS form probe: user_inputs=%s pass_inputs=%s url=%s", user_count, pass_count, page.url)
+    if not (user_count and pass_count):
         return False
     bb_user, bb_pass = get_credentials()
+    log.info("Credentials check: user=%s pass=%s", "<set>" if bb_user else "<empty>", "<set>" if bb_pass else "<empty>")
     if not (bb_user and bb_pass):
         log.warning(
             "CAS form detected but no credentials available "

@@ -21,6 +21,14 @@ from app.config import settings
 from app.db import engine, init_db
 from app.models import ScrapeRun, utcnow
 
+# Make sure scraper.* loggers actually emit INFO/DEBUG to the container stdout.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logging.getLogger("scraper").setLevel(logging.INFO)
+logging.getLogger("scraper.login").setLevel(logging.DEBUG)
+
 log = logging.getLogger("app.main")
 
 BASE_DIR = Path(__file__).resolve().parent

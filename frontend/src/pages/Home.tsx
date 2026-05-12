@@ -30,8 +30,8 @@ export function Home() {
         <Card className="overflow-hidden">
           <CardHeader className="flex flex-row items-start justify-between gap-3">
             <div>
-              <CardTitle>Recent grades</CardTitle>
-              <p className="text-xs text-muted-foreground">Posted in the last 7 days</p>
+              <CardTitle>Latest grades</CardTitle>
+              <p className="text-xs text-muted-foreground">Most recent across all courses</p>
             </div>
             <ToggleSwitch
               checked={showUngraded}
