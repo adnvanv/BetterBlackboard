@@ -126,16 +126,32 @@ def _record_grade(session, course_id: int, rec) -> None:
             course_id=course_id,
             blackboard_id=f"grade-stub::{rec.assignment_title}",
             title=rec.assignment_title,
+            due_at=getattr(rec, "posted_at", None),
         )
         session.add(assignment)
         session.flush()
+    else:
+        # If the assignments-page scraper couldn't extract a due date but the
+        # grade row gave us one, backfill it. This is what powers the
+        # chronological ordering on the dashboard for Ultra courses.
+        rec_dt = getattr(rec, "posted_at", None)
+        if rec_dt is not None and assignment.due_at is None:
+            assignment.due_at = rec_dt
+            session.add(assignment)
 
     last = session.exec(
         select(Grade)
         .where(Grade.assignment_id == assignment.id)
         .order_by(Grade.scraped_at.desc())
     ).first()
+    new_posted_at = getattr(rec, "posted_at", None)
     if last and last.score == rec.score and last.letter == rec.letter and last.raw == rec.raw:
+        # Score didn't change. But if we now have a posted_at (e.g., after we
+        # added that field) and the stored row doesn't, backfill it so the
+        # "Latest grades" ranking can use it.
+        if new_posted_at is not None and last.posted_at is None:
+            last.posted_at = new_posted_at
+            session.add(last)
         return
     session.add(Grade(
         assignment_id=assignment.id,
@@ -143,7 +159,7 @@ def _record_grade(session, course_id: int, rec) -> None:
         points_possible=rec.points_possible,
         letter=rec.letter,
         raw=rec.raw,
-        posted_at=getattr(rec, "posted_at", None),
+        posted_at=new_posted_at,
     ))
 
 
